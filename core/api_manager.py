@@ -57,6 +57,25 @@ class APIKeyManager:
             "temperature": 0.7,
             "top_p": 0.9,
         },
+        # ---- 本地模型预设 ----
+        "Ollama (本地)": {
+            "api_key": "ollama",
+            "base_url": "http://localhost:11434/v1",
+            "model": "llama3",
+            "max_tokens": 4096,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "is_local": True,
+        },
+        "LM Studio (本地)": {
+            "api_key": "not-needed",
+            "base_url": "http://localhost:1234/v1",
+            "model": "local-model",
+            "max_tokens": 4096,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "is_local": True,
+        },
     }
 
     def __init__(self):
@@ -232,6 +251,84 @@ class APIKeyManager:
         if cfg:
             return TextHelper.mask_api_key(cfg.get("api_key", ""))
         return "****"
+
+    # ---- 本地模型支持 ----
+
+    def is_local(self, name: str = None) -> bool:
+        """判断指定配置是否为本地模型"""
+        cfg = self.get_config(name) if name else self.get_current_config()
+        return cfg.get("is_local", False) if cfg else False
+
+    def fetch_local_models(self, name_or_cfg=None) -> List[str]:
+        """从本地 API 获取可用模型列表
+        支持: Ollama (/api/tags), LM Studio (/v1/models), OpenAI 兼容 (/v1/models)
+        name_or_cfg: 配置名称(str) 或 配置字典(dict)
+        """
+        if isinstance(name_or_cfg, dict):
+            cfg = name_or_cfg
+        elif isinstance(name_or_cfg, str):
+            cfg = self.get_config(name_or_cfg)
+        else:
+            cfg = self.get_current_config()
+        if not cfg:
+            return []
+
+        base_url = cfg["base_url"].rstrip("/")
+        api_key = cfg.get("api_key", "")
+        models = []
+
+        # 1. 尝试 OpenAI 兼容端点 /v1/models
+        try:
+            resp = requests.get(
+                f"{base_url}/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=5
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                for m in data.get("data", []):
+                    mid = m.get("id", m.get("model", ""))
+                    if mid:
+                        models.append(mid)
+                if models:
+                    return models
+        except Exception:
+            pass
+
+        # 2. 尝试 Ollama 端点 /api/tags
+        try:
+            # 从 /v1 回退到根地址
+            ollama_base = base_url.replace("/v1", "").replace("/v1/", "")
+            resp = requests.get(
+                f"{ollama_base}/api/tags",
+                timeout=5
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                for m in data.get("models", []):
+                    mid = m.get("name", "")
+                    if mid:
+                        models.append(mid)
+                return models
+        except Exception:
+            pass
+
+        return models
+
+    def ping_local(self, name: str = None) -> Dict:
+        """测试本地模型是否可达"""
+        cfg = self.get_config(name) if name else self.get_current_config()
+        if not cfg:
+            return {"success": False, "error": "未找到配置"}
+
+        base_url = cfg["base_url"].rstrip("/")
+        try:
+            resp = requests.get(base_url.replace("/v1", ""), timeout=5)
+            return {"success": resp.status_code < 500, "status": resp.status_code}
+        except requests.exceptions.ConnectionError:
+            return {"success": False, "error": "无法连接，请确认本地服务已启动"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     # ---- 余额查询 ----
 
