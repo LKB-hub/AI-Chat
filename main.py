@@ -2359,6 +2359,18 @@ class APIKeyEditDialog(CustomDialog):
                 e.config(state=tk.DISABLED)  # 编辑时不可改名称
             self.fields[label] = e
 
+        # 本地模型操作按钮（在 Model 字段下方）
+        local_btn_frame = tk.Frame(self, bg=theme.bg_dialog)
+        local_btn_frame.pack(fill=tk.X, padx=24, pady=(6, 0))
+        self.create_button(local_btn_frame, "🔄 刷新模型列表", self._refresh_models,
+                           bg=theme.accent_secondary).pack(side=tk.LEFT, padx=(0, 6))
+        self.create_button(local_btn_frame, "🔌 测试连接", self._test_connection,
+                           bg=theme.accent_purple).pack(side=tk.LEFT)
+        self.model_status_label = tk.Label(local_btn_frame, text="",
+                                            bg=theme.bg_dialog, fg=theme.fg_label,
+                                            font=(theme.font_family, theme.font_size_xs))
+        self.model_status_label.pack(side=tk.RIGHT)
+
         # 参数区
         slider_frame = tk.Frame(self, bg=theme.bg_dialog)
         slider_frame.pack(fill=tk.X, padx=24, pady=(12, 0))
@@ -2409,6 +2421,110 @@ class APIKeyEditDialog(CustomDialog):
         self.create_button(btn_frame, "取消", self.destroy,
                            bg=theme.bg_hover, fg=theme.fg_text).pack(side=tk.RIGHT)
         self.create_button(btn_frame, "确定", self._save).pack(side=tk.RIGHT, padx=(0, 8))
+
+    def _refresh_models(self):
+        """从本地 API 刷新模型列表并填入 Model 字段"""
+        base_url = self.fields["Base URL"].get().strip()
+        api_key = self.fields["API Key"].get().strip()
+        if not base_url:
+            messagebox.showwarning("警告", "请先填写 Base URL。", parent=self)
+            return
+        self.model_status_label.config(text="查询中...")
+        self.update()
+
+        # 构建临时配置用于查询
+        temp_cfg = {"base_url": base_url, "api_key": api_key}
+        models = api_key_manager.fetch_local_models(temp_cfg)
+
+        if not models:
+            self.model_status_label.config(text="⚠️ 未获取到模型列表")
+            messagebox.showinfo("提示",
+                "未找到模型列表。请确认：\n"
+                "1. 本地服务已启动（Ollama / LM Studio）\n"
+                "2. Base URL 正确\n"
+                "3. 模型已下载\n\n"
+                "也可以手动在 Model 字段输入模型名称。",
+                parent=self)
+            return
+
+        # 将第一个模型填入 Model 字段
+        self.fields["Model"].delete(0, tk.END)
+        self.fields["Model"].insert(0, models[0])
+        self.model_status_label.config(text=f"✅ 共 {len(models)} 个模型")
+
+        # 如果只有 1 个模型，直接提示
+        if len(models) == 1:
+            Toast(self, f"已填入模型: {models[0]}", "success").show()
+        else:
+            # 多个模型时弹窗让用户选
+            self._show_model_selector(models)
+
+    def _show_model_selector(self, models: List[str]):
+        """弹窗选择模型"""
+        dialog = tk.Toplevel(self)
+        dialog.title("选择模型")
+        dialog.geometry("400x300")
+        dialog.transient(self)
+        dialog.grab_set()
+        theme = get_theme()
+        dialog.configure(bg=theme.bg_dialog)
+
+        tk.Label(dialog, text="可用模型（点击选择）:",
+                 bg=theme.bg_dialog, fg=theme.fg_text,
+                 font=(theme.font_family, theme.font_size_md)).pack(padx=16, pady=(12, 4), anchor="w")
+
+        listbox = tk.Listbox(dialog, font=(theme.font_family, theme.font_size_sm),
+                              bg=theme.bg_input, fg=theme.fg_text,
+                              selectbackground=theme.accent_primary, selectforeground="white")
+        for m in models:
+            listbox.insert(tk.END, m)
+        listbox.pack(fill=tk.BOTH, expand=True, padx=16, pady=4)
+
+        def on_select():
+            sel = listbox.curselection()
+            if sel:
+                self.fields["Model"].delete(0, tk.END)
+                self.fields["Model"].insert(0, models[sel[0]])
+            dialog.destroy()
+
+        btn_frame = tk.Frame(dialog, bg=theme.bg_dialog)
+        btn_frame.pack(fill=tk.X, padx=16, pady=(4, 12))
+        tk.Button(btn_frame, text="确定", command=on_select,
+                   bg=theme.accent_primary, fg="white",
+                   font=(theme.font_family, theme.font_size_sm),
+                   relief=tk.FLAT, padx=16).pack(side=tk.RIGHT)
+        tk.Button(btn_frame, text="取消", command=dialog.destroy,
+                   bg=theme.bg_hover, fg=theme.fg_text,
+                   font=(theme.font_family, theme.font_size_sm),
+                   relief=tk.FLAT, padx=16).pack(side=tk.RIGHT, padx=(0, 8))
+
+    def _test_connection(self):
+        """测试本地模型连接"""
+        base_url = self.fields["Base URL"].get().strip()
+        if not base_url:
+            messagebox.showwarning("警告", "请先填写 Base URL。", parent=self)
+            return
+        self.model_status_label.config(text="测试中...")
+        self.update()
+
+        try:
+            test_url = base_url.rstrip("/")
+            resp = requests.get(test_url, timeout=5)
+            self.model_status_label.config(
+                text=f"✅ 可达 (HTTP {resp.status_code})" if resp.status_code < 500 else f"⚠️ 响应异常 ({resp.status_code})")
+            Toast(self, f"连接成功! HTTP {resp.status_code}", "success").show()
+        except requests.exceptions.ConnectionError:
+            self.model_status_label.config(text="❌ 无法连接")
+            messagebox.showerror("连接失败",
+                f"无法连接到 {base_url}\n\n"
+                "请确认：\n"
+                "1. 本地 AI 服务已启动\n"
+                "2. Base URL 地址正确\n"
+                "3. 端口号正确（Ollama: 11434, LM Studio: 1234）",
+                parent=self)
+        except Exception as e:
+            self.model_status_label.config(text="❌ 错误")
+            messagebox.showerror("错误", str(e), parent=self)
 
     def _save(self):
         name = self.fields["配置名称"].get().strip()
