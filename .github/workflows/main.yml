@@ -27,7 +27,7 @@ jobs:
           sudo apt update
           sudo apt install -y \
             git zip unzip openjdk-17-jdk \
-            python3-pip autoconf libtool \
+            python3-pip autoconf autoconf-archive libtool \
             pkg-config zlib1g-dev libncurses5-dev \
             libncursesw5-dev cmake \
             libffi-dev libssl-dev
@@ -36,6 +36,13 @@ jobs:
         run: |
           pip install --upgrade pip setuptools wheel cython
           pip install buildozer
+
+      - name: Download Chinese font
+        run: |
+          mkdir -p fonts
+          wget -q -O fonts/wqy-microhei.ttc \
+            https://github.com/anthonyfok/fonts-wqy-microhei/raw/master/wqy-microhei.ttc || \
+          echo "Font download skipped"
 
       - name: Build APK
         run: buildozer -v android debug
