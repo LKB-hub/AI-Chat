@@ -48,11 +48,31 @@ jobs:
           echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;25.2.9519653"
           echo "ANDROIDNDK=$ANDROID_HOME/ndk/25.2.9519653" >> $GITHUB_ENV
 
-      - name: 清理旧的 buildozer 缓存（避免陈旧产物干扰）
+      - name: 清理旧的 buildozer 缓存
         run: |
           rm -rf ~/.buildozer
           rm -rf ~/.local/share/python-for-android
 
+      - name: 确认 buildozer.spec 位置
+        run: |
+          echo "=== 项目文件结构 ==="
+          find . -name "buildozer.spec" -maxdepth 3
+
       - name: 编译 APK
         run: |
-          buildozer android debug
+          cd android
+          buildozer android debug 2>&1 | tee build.log
+
+      - name: 上传构建日志（方便排查）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: android/build.log
+
+      - name: 上传 APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: android/bin/*.apk
