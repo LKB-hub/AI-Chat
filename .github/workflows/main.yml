@@ -1,56 +1,58 @@
 name: Build Android APK
 
 on:
-  push:
-    branches: [ "main" ]
-    paths:
-      - 'android/**'
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./android
+    runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      - name: 检出代码
+        uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: 设置 Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
-      - name: Install system dependencies
+      - name: 安装系统依赖
         run: |
-          sudo apt update
-          sudo apt install -y \
-            git zip unzip openjdk-17-jdk \
-            python3-pip autoconf autoconf-archive libtool \
-            pkg-config zlib1g-dev libncurses5-dev \
-            libncursesw5-dev cmake \
-            libffi-dev libssl-dev
+          sudo apt-get update
+          sudo apt-get install -y \
+            libtool \
+            autoconf \
+            automake \
+            pkg-config \
+            libssl-dev \
+            libffi-dev \
+            libncurses5-dev \
+            zlib1g-dev \
+            ccache
 
-      - name: Install Buildozer
+      - name: 🔧 修复 libtool 宏兼容性（Ubuntu 24.04 必须）
         run: |
-          pip install --upgrade pip setuptools wheel cython
-          pip install buildozer
+          # libtool 2.4.7+ 移除了 LT_SYS_SYMBOL_USCORE
+          # 但 p4a 编译旧版 libffi 时还引用它，补一个兼容宏
+          printf 'AC_DEFUN([LT_SYS_SYMBOL_USCORE], [AC_SYS_SYMBOL_USCORE])\n' | \
+            sudo tee /usr/share/aclocal/libtool-uscore.m4
+          echo "ACLOCAL_PATH=/usr/share/aclocal" >> $GITHUB_ENV
 
-      - name: Download Chinese font
+      - name: 安装 Python 依赖
         run: |
-          mkdir -p fonts
-          wget -q -O fonts/wqy-microhei.ttc \
-            https://github.com/anthonyfok/fonts-wqy-microhei/raw/master/wqy-microhei.ttc || \
-          echo "Font download skipped"
+          pip install --upgrade pip setuptools wheel
+          pip install buildozer Cython==0.29.37
 
-      - name: Build APK
-        run: buildozer -v android debug
+      - name: 安装并锁定 NDK r25（避免 NDK r27 兼容问题）
+        run: |
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;25.2.9519653"
+          echo "ANDROIDNDK=$ANDROID_HOME/ndk/25.2.9519653" >> $GITHUB_ENV
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: AI-Chat-APK
-          path: android/bin/*.apk
-          if-no-files-found: error
-          retention-days: 30
+      - name: 清理旧的 buildozer 缓存（避免陈旧产物干扰）
+        run: |
+          rm -rf ~/.buildozer
+          rm -rf ~/.local/share/python-for-android
+
+      - name: 编译 APK
+        run: |
+          buildozer android debug
